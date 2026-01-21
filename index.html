@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Minecraft Clone - Mobile Full v3</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; user-select: none; touch-action: none; -webkit-touch-callout: none; }
+        
+        #instructions {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center; color: white; background: rgba(0,0,0,0.6);
+            padding: 20px; border-radius: 10px; cursor: pointer;
+            z-index: 10;
+        }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 20px; height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.8); border-radius: 50%;
+            transform: translate(-50%, -50%); pointer-events: none; z-index: 5;
+        }
+        #crosshair::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px; background: red;
+            transform: translate(-50%, -50%);
+        }
+        #hotbar {
+            position: absolute; bottom: 10px; left: 50%;
+            transform: translateX(-50%);
+            display: flex; gap: 5px;
+            background: rgba(0, 0, 0, 0.4); padding: 5px; border-radius: 5px;
+            z-index: 20; /* UIの優先度を高く設定 */
+        }
+        .slot {
+            width: 30px; height: 30px; border: 2px solid #555;
+            display: flex; justify-content: center; align-items: center;
+            color: white; font-weight: bold; background-color: #333;
+            background-size: cover; image-rendering: pixelated; font-size: 12px;
+            cursor: pointer; pointer-events: auto; /* タップ可能に */
+        }
+        .slot.active { border-color: white; transform: scale(1.1); box-shadow: 0 0 5px white; }
+        #death-msg {
+            display: none; position: absolute; top: 40%; width: 100%;
+            text-align: center; color: red; font-size: 40px; font-weight: bold; text-shadow: 2px 2px 0 #000; z-index: 30;
+        }
+
+        /* --- モバイル用コントローラー --- */
+        .mobile-ctrl {
+            position: absolute; z-index: 8; display: none; 
+        }
+        /* 左手：移動キー */
+        #dpad { bottom: 40px; left: 20px; width: 160px; height: 160px; }
+        .d-btn {
+            position: absolute; width: 50px; height: 50px;
+            background: rgba(255, 255, 255, 0.2); border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 10px; color: white; font-size: 20px; display: flex;
+            justify-content: center; align-items: center; pointer-events: auto;
+        }
+        .d-btn:active { background: rgba(255, 255, 255, 0.5); }
+        #btn-up { top: 0; left: 55px; }
+        #btn-down { bottom: 0; left: 55px; }
+        #btn-left { top: 55px; left: 0; }
+        #btn-right { top: 55px; right: 0; }
+
+        /* 右手：アクション */
+        #actions { bottom: 40px; right: 20px; width: 150px; height: 150px; }
+        .act-btn {
+            position: absolute; width: 60px; height: 60px; border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2); border: 2px solid rgba(255, 255, 255, 0.4);
+            color: white; font-size: 24px; display: flex;
+            justify-content: center; align-items: center; pointer-events: auto;
+        }
+        .act-btn:active { background: rgba(255, 255, 255, 0.5); }
+        #btn-jump { bottom: 0; right: 0; background: rgba(0, 255, 0, 0.2); }
+        #btn-break { top: 0; right: 80px; background: rgba(255, 0, 0, 0.2); } 
+        #btn-place { top: 0; right: 0; background: rgba(0, 0, 255, 0.2); } 
+
+        @media (max-width: 800px) {
+            #hotbar { bottom: 5px; }
+            .slot { width: 35px; height: 35px; } /* スマホ用に少し大きく */
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair"></div>
+    <div id="instructions">
+        <h1>タップして開始</h1>
+        <p>PC: WASD移動 / Spaceジャンプ</p>
+        <p>スマホ: 左手で移動 / 右手でスワイプして視点</p>
+        <p style="color:lime">修正: アイコンタップでブロック選択</p>
+    </div>
+    <div id="hotbar"></div>
+    <div id="death-msg">YOU DIED</div>
+
+    <div id="dpad" class="mobile-ctrl">
+        <div id="btn-up" class="d-btn">▲</div>
+        <div id="btn-down" class="d-btn">▼</div>
+        <div id="btn-left" class="d-btn">◀</div>
+        <div id="btn-right" class="d-btn">▶</div>
+    </div>
+    <div id="actions" class="mobile-ctrl">
+        <div id="btn-break" class="act-btn">⛏️</div>
+        <div id="btn-place" class="act-btn">🧱</div>
+        <div id="btn-jump" class="act-btn">⬆</div>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- 設定 ---
+        const BLOCK_SIZE = 5;
+        const WORLD_SIZE = 60;
+        const WATER_LEVEL = 0; 
+        const PLAYER_HEIGHT = 1.8 * BLOCK_SIZE;
+        const PLAYER_WIDTH = 0.6 * BLOCK_SIZE; 
+        const EYE_HEIGHT = 1.6 * BLOCK_SIZE;
+        const MOVE_SPEED = 30.0 * BLOCK_SIZE; 
+        const JUMP_SPEED = 16.0 * BLOCK_SIZE;
+        const GRAVITY = 60.0 * BLOCK_SIZE;
+
+        let camera, scene, renderer, controls, raycaster;
+        const worldMap = new Map();
+        const objects = []; 
+        let mobs = [];
+        const particles = [];
+        const playerPos = new THREE.Vector3(0, 100, 0);
+        const playerVel = new THREE.Vector3();
+        let onGround = false;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let prevTime = performance.now();
+        let isMobile = false;
+
+        const blockTypes = [
+            { name: "草", type: "grass" }, { name: "土", type: "dirt" }, { name: "石", type: "stone" },
+            { name: "原木", type: "wood" }, { name: "葉", type: "leaves" }, { name: "煉瓦", type: "brick" },
+            { name: "砂", type: "sand" }, { name: "板材", type: "plank" }, { name: "水", type: "water" }, { name: "TNT", type: "tnt" }
+        ];
+        let materials = [];
+        let currentBlockIndex = 0;
+        let boxGeometry;
+
+        // --- Mob ---
+        class Mob {
+            constructor(type, x, y, z) {
+                this.type = type;
+                this.mesh = new THREE.Group();
+                this.mesh.position.set(x, y, z);
+                this.velocity = new THREE.Vector3(0, 0, 0);
+                this.alive = true;
+                this.hp = 3;
+                this.flashTime = 0;
+                this.moveDir = Math.random() * Math.PI * 2;
+                this.changeDirTimer = 0;
+                this.width = BLOCK_SIZE * 0.5; 
+                this.height = BLOCK_SIZE * (type === 'chicken' ? 0.8 : 1.5);
+                this.buildModel();
+                scene.add(this.mesh);
+            }
+            buildModel() {
+                const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+                this.origMats = [];
+                const box = (w, h, d, c, x, y, z) => {
+                    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c));
+                    m.position.set(x, y, z);
+                    this.mesh.add(m);
+                    this.origMats.push(m.material);
+                };
+                const s = BLOCK_SIZE;
+                if (this.type === 'pig') {
+                    box(s*0.9, s*0.6, s*1.2, 0xFFC0CB, 0, s*0.5, 0); 
+                    box(s*0.5, s*0.5, s*0.5, 0xFFC0CB, 0, s*0.7, s*0.7); 
+                } else if (this.type === 'cow') {
+                    box(s*0.9, s*0.7, s*1.4, 0x554433, 0, s*0.6, 0);
+                    box(s*0.6, s*0.6, s*0.6, 0x554433, 0, s*0.9, s*0.8);
+                } else if (this.type === 'chicken') {
+                    box(s*0.6, s*0.5, s*0.6, 0xFFFFFF, 0, s*0.4, 0);
+                    box(s*0.3, s*0.4, s*0.3, 0xFFFFFF, 0, s*0.7, s*0.3);
+                } else { 
+                    box(s*0.6, s*1.4, s*0.4, 0x604020, 0, s*0.7, 0);
+                    box(s*0.5, s*0.5, s*0.5, 0xF5DEB3, 0, s*1.65, 0);
+                }
+            }
+            takeDamage(fromPos) {
+                if (!this.alive) return;
+                this.hp--;
+                this.flashTime = 0.2;
+                const dir = new THREE.Vector3().subVectors(this.mesh.position, fromPos).normalize();
+                this.velocity.add(dir.multiplyScalar(15.0));
+                this.velocity.y = 10.0;
+                if (this.hp <= 0) {
+                    this.alive = false;
+                    scene.remove(this.mesh);
+                    createExplosion(this.mesh.position, 5, 0xFFFFFF);
+                }
+            }
+            update(delta) {
+                if (!this.alive) return;
+                if (this.flashTime > 0) {
+                    this.flashTime -= delta;
+                    this.mesh.children.forEach(c => c.material = new THREE.MeshBasicMaterial({ color: 0xFF0000 }));
+                } else {
+                    this.mesh.children.forEach((c, i) => c.material = this.origMats[i]);
+                }
+                this.changeDirTimer -= delta;
+                if (this.changeDirTimer <= 0) {
+                    this.changeDirTimer = 2 + Math.random() * 4;
+                    this.moveDir = Math.random() * Math.PI * 2;
+                    this.mesh.rotation.y = -this.moveDir;
+                }
+                const speed = 3.0 * BLOCK_SIZE;
+                this.velocity.x += (Math.sin(this.moveDir) * speed - this.velocity.x) * 5 * delta;
+                this.velocity.z += (Math.cos(this.moveDir) * speed - this.velocity.z) * 5 * delta;
+                this.velocity.y -= GRAVITY * delta;
+                
+                let nextX = this.mesh.position.x + this.velocity.x * delta;
+                if (checkAABB(nextX, this.mesh.position.y, this.mesh.position.z, this.width, this.height)) {
+                    this.velocity.x = 0; this.moveDir += Math.PI;
+                } else this.mesh.position.x = nextX;
+                let nextZ = this.mesh.position.z + this.velocity.z * delta;
+                if (checkAABB(this.mesh.position.x, this.mesh.position.y, nextZ, this.width, this.height)) {
+                    this.velocity.z = 0; this.moveDir += Math.PI;
+                } else this.mesh.position.z = nextZ;
+                let nextY = this.mesh.position.y + this.velocity.y * delta;
+                if (checkAABB(this.mesh.position.x, nextY, this.mesh.position.z, this.width, this.height)) {
+                    if (this.velocity.y < 0) this.mesh.position.y = Math.ceil(nextY / BLOCK_SIZE) * BLOCK_SIZE;
+                    this.velocity.y = 0;
+                } else this.mesh.position.y = nextY;
+                if (this.mesh.position.y < -50) this.mesh.position.y = 100;
+            }
+        }
+
+        init();
+        animate();
+
+        function init() {
+            isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.Fog(0x87CEEB, 20, 300);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            
+            controls = new PointerLockControls(camera, document.body);
+            scene.add(controls.getObject());
+
+            const inst = document.getElementById('instructions');
+            if (isMobile) {
+                inst.innerHTML = "<h1>タップして開始</h1>";
+                inst.addEventListener('click', () => {
+                    inst.style.display = 'none';
+                    document.querySelectorAll('.mobile-ctrl').forEach(el => el.style.display = 'block');
+                });
+                setupMobileControls();
+            } else {
+                inst.addEventListener('click', () => controls.lock());
+                controls.addEventListener('lock', () => inst.style.display = 'none');
+                controls.addEventListener('unlock', () => inst.style.display = 'block');
+            }
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+            dir.position.set(50, 200, 100);
+            scene.add(dir);
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', (e) => { 
+                // モバイルの場合、UIへのタッチは除外
+                if(isMobile && (e.target.closest('#hotbar') || e.target.closest('.mobile-ctrl'))) return;
+                if(!isMobile) onMouseDown(e); 
+            });
+            window.addEventListener('resize', onResize);
+
+            raycaster = new THREE.Raycaster();
+            boxGeometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+
+            generateMaterials();
+            setupHotbar();
+            generateTerrain(); 
+            spawnMobs();
+
+            renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+        }
+
+        // --- モバイル操作 ---
+        function setupMobileControls() {
+            const bindBtn = (id, keyStart, keyEnd) => {
+                const btn = document.getElementById(id);
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); keyStart(); });
+                btn.addEventListener('touchend', (e) => { e.preventDefault(); keyEnd(); });
+            };
+            bindBtn('btn-up', () => moveForward=true, () => moveForward=false);
+            bindBtn('btn-down', () => moveBackward=true, () => moveBackward=false);
+            bindBtn('btn-left', () => moveLeft=true, () => moveLeft=false);
+            bindBtn('btn-right', () => moveRight=true, () => moveRight=false);
+            bindBtn('btn-jump', () => { if(onGround) playerVel.y = JUMP_SPEED; }, () => {});
+
+            document.getElementById('btn-break').addEventListener('touchstart', (e) => { e.preventDefault(); performAction(false); });
+            document.getElementById('btn-place').addEventListener('touchstart', (e) => { e.preventDefault(); performAction(true); });
+
+            // 視点操作
+            let lookTouchId = null;
+            let lastLookX = 0, lastLookY = 0;
+
+            document.addEventListener('touchstart', (e) => {
+                if (e.target.closest('.mobile-ctrl') || e.target.closest('#hotbar')) return;
+                
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    if (lookTouchId === null) {
+                        lookTouchId = t.identifier;
+                        lastLookX = t.pageX;
+                        lastLookY = t.pageY;
+                        break;
+                    }
+                }
+            }, {passive: false});
+
+            document.addEventListener('touchmove', (e) => {
+                if (e.target.closest('#hotbar')) return;
+                e.preventDefault(); // スクロール防止
+
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    if (t.identifier === lookTouchId) {
+                        const dx = t.pageX - lastLookX;
+                        const dy = t.pageY - lastLookY;
+
+                        const cam = controls.getObject();
+                        cam.rotation.y -= dx * 0.006;
+                        cam.rotation.x -= dy * 0.006;
+                        cam.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, cam.rotation.x));
+
+                        lastLookX = t.pageX;
+                        lastLookY = t.pageY;
+                    }
+                }
+            }, {passive: false});
+
+            document.addEventListener('touchend', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === lookTouchId) lookTouchId = null; 
+                }
+            });
+        }
+
+        function performAction(isPlace) {
+            raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+            if (!isPlace) {
+                for(const m of mobs) {
+                    if(!m.alive) continue;
+                    const ints = raycaster.intersectObjects(m.mesh.children);
+                    if(ints.length>0 && ints[0].distance < 30) {
+                        m.takeDamage(playerPos); 
+                        createExplosion(ints[0].point, 3, 0xFF0000);
+                        return; 
+                    }
+                }
+            }
+            const ints = raycaster.intersectObjects(objects, false);
+            if(ints.length>0 && ints[0].distance < 30) {
+                const i = ints[0];
+                if(isPlace) { 
+                    const p = i.point.clone().addScaledVector(i.face.normal, 0.1);
+                    const gx = Math.floor(p.x/BLOCK_SIZE), gy = Math.floor(p.y/BLOCK_SIZE), gz = Math.floor(p.z/BLOCK_SIZE);
+                    const bx = gx*BLOCK_SIZE+BLOCK_SIZE/2, by = gy*BLOCK_SIZE+BLOCK_SIZE/2, bz = gz*BLOCK_SIZE+BLOCK_SIZE/2;
+                    if(Math.abs(playerPos.x-bx)<PLAYER_WIDTH+2 && Math.abs(playerPos.z-bz)<PLAYER_WIDTH+2 && by>=playerPos.y && by<playerPos.y+PLAYER_HEIGHT) return;
+                    addBlockGrid(gx, gy, gz, currentBlockIndex);
+                } else { 
+                    if(i.object.name === "TNT") igniteTNT(i.object);
+                    else removeBlock(i.object);
+                }
+            }
+        }
+
+        function onMouseDown(e) {
+            if (!controls.isLocked && !isMobile) return;
+            const isPlace = e.button === 2 || e.shiftKey;
+            performAction(isPlace);
+        }
+
+        function generateTerrain() {
+            const r = WORLD_SIZE/2;
+            let sy = 60;
+            for(let x=-r; x<r; x++) {
+                for(let z=-r; z<r; z++) {
+                    const noise = Math.sin(x*0.1)*Math.cos(z*0.1)*5 + Math.sin(x*0.3+z*0.2)*2;
+                    let h = Math.floor(noise);
+                    if(x===0 && z===0) sy = (h+5)*BLOCK_SIZE;
+                    for(let y=-5; y<=Math.max(h, WATER_LEVEL/BLOCK_SIZE); y++) {
+                        let type = 2; 
+                        if (y <= h) {
+                            if (y === h) {
+                                if (y <= WATER_LEVEL/BLOCK_SIZE + 1 && y >= WATER_LEVEL/BLOCK_SIZE - 1) type = 6; 
+                                else type = 0; 
+                            } else if (y > h-3) type = 1; 
+                            addBlockGrid(x, y, z, type);
+                        } else if (y <= WATER_LEVEL/BLOCK_SIZE) addBlockGrid(x, y, z, 8); 
+                    }
+                    if (h > WATER_LEVEL/BLOCK_SIZE + 1 && Math.random() < 0.02) createTree(x, h+1, z);
+                }
+            }
+            playerPos.set(0, sy, 0);
+        }
+
+        function createTree(gx, gy, gz) {
+            const height = 4 + Math.floor(Math.random()*2);
+            for(let i=0; i<height; i++) addBlockGrid(gx, gy+i, gz, 3);
+            const leafY = gy + height - 2;
+            for(let lx=-2; lx<=2; lx++) for(let lz=-2; lz<=2; lz++) for(let ly=0; ly<2; ly++) {
+                if(Math.abs(lx)===2 && Math.abs(lz)===2 && Math.random()<0.5) continue; 
+                if(lx===0 && lz===0 && ly===0) continue; 
+                addBlockGrid(gx+lx, leafY+ly, gz+lz, 4);
+            }
+            addBlockGrid(gx, leafY+2, gz, 4); addBlockGrid(gx+1, leafY+2, gz, 4); addBlockGrid(gx-1, leafY+2, gz, 4);
+            addBlockGrid(gx, leafY+2, gz+1, 4); addBlockGrid(gx, leafY+2, gz-1, 4);
+        }
+
+        function checkAABB(x, y, z, width, height) {
+            const hw = width / 2;
+            const minX = Math.floor((x - hw) / BLOCK_SIZE), maxX = Math.floor((x + hw) / BLOCK_SIZE);
+            const minY = Math.floor(y / BLOCK_SIZE), maxY = Math.floor((y + height - 0.1) / BLOCK_SIZE);
+            const minZ = Math.floor((z - hw) / BLOCK_SIZE), maxZ = Math.floor((z + hw) / BLOCK_SIZE);
+            for (let ix = minX; ix <= maxX; ix++) for (let iy = minY; iy <= maxY; iy++) for (let iz = minZ; iz <= maxZ; iz++) {
+                const block = getBlockGrid(ix, iy, iz);
+                if (block && materials.indexOf(block.material) !== 8) return true;
+            }
+            return false;
+        }
+
+        function createExplosion(pos, count, color) {
+            const geo = new THREE.BoxGeometry(2, 2, 2);
+            const mat = new THREE.MeshBasicMaterial({ color: color });
+            for(let i=0; i<count; i++) {
+                const p = new THREE.Mesh(geo, mat);
+                p.position.copy(pos);
+                p.userData = { vel: new THREE.Vector3(Math.random()-0.5, Math.random(), Math.random()-0.5).multiplyScalar(30), life: 1.0 + Math.random() };
+                scene.add(p); particles.push(p);
+            }
+        }
+
+        function igniteTNT(blockMesh) {
+            let toggle = true;
+            const blink = setInterval(() => { blockMesh.material = toggle ? new THREE.MeshBasicMaterial({color:0xFFFFFF}) : materials[9]; toggle = !toggle; }, 300);
+            setTimeout(() => { clearInterval(blink); explode(blockMesh.position.clone()); }, 3000);
+        }
+
+        function explode(center) {
+            const radius = 4.0 * BLOCK_SIZE;
+            createExplosion(center, 50, 0xFFA500); 
+            const rGrid = Math.ceil(radius / BLOCK_SIZE);
+            const cgx = Math.floor(center.x / BLOCK_SIZE), cgy = Math.floor(center.y / BLOCK_SIZE), cgz = Math.floor(center.z / BLOCK_SIZE);
+            for (let x = -rGrid; x <= rGrid; x++) for (let y = -rGrid; y <= rGrid; y++) for (let z = -rGrid; z <= rGrid; z++) {
+                if (Math.sqrt(x*x + y*y + z*z)*BLOCK_SIZE <= radius) {
+                    const obj = getBlockGrid(cgx+x, cgy+y, cgz+z);
+                    if (obj) removeBlock(obj);
+                }
+            }
+            const push = (objPos, vel) => {
+                const d = objPos.distanceTo(center);
+                if (d < radius * 3) {
+                    const dir = new THREE.Vector3().subVectors(objPos, center).normalize();
+                    vel.add(dir.multiplyScalar(1000 / (d + 10))); vel.y += 20;
+                }
+            };
+            push(playerPos, playerVel);
+            mobs.forEach(m => { if(m.alive && m.mesh.position.distanceTo(center) < radius * 2) { m.takeDamage(center); m.takeDamage(center); } });
+        }
+
+        function updatePhysics(delta) {
+            playerVel.x -= playerVel.x * 10.0 * delta;
+            playerVel.z -= playerVel.z * 10.0 * delta;
+            playerVel.y -= GRAVITY * delta;
+
+            if (moveForward || moveBackward || moveLeft || moveRight) {
+                const fwd = new THREE.Vector3(); 
+                controls.getDirection(fwd); 
+                fwd.y = 0; fwd.normalize();
+                const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0,1,0)).normalize();
+                const dir = new THREE.Vector3();
+                if(moveForward) dir.add(fwd); if(moveBackward) dir.sub(fwd);
+                if(moveRight) dir.add(right); if(moveLeft) dir.sub(right);
+                dir.normalize();
+                if(dir.lengthSq()>0) {
+                    playerVel.x += dir.x * MOVE_SPEED * delta;
+                    playerVel.z += dir.z * MOVE_SPEED * delta;
+                }
+            }
+
+            const nx = playerPos.x + playerVel.x * delta;
+            if (checkAABB(nx, playerPos.y, playerPos.z, PLAYER_WIDTH, PLAYER_HEIGHT)) playerVel.x = 0; else playerPos.x = nx;
+            const nz = playerPos.z + playerVel.z * delta;
+            if (checkAABB(playerPos.x, playerPos.y, nz, PLAYER_WIDTH, PLAYER_HEIGHT)) playerVel.z = 0; else playerPos.z = nz;
+            const ny = playerPos.y + playerVel.y * delta;
+            if (checkAABB(playerPos.x, ny, playerPos.z, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+                if (playerVel.y < 0) { onGround = true; playerPos.y = Math.ceil(ny / BLOCK_SIZE) * BLOCK_SIZE; }
+                playerVel.y = 0;
+            } else { playerPos.y = ny; onGround = false; }
+
+            if(playerPos.y < -50) {
+                playerPos.set(0,80,0); playerVel.set(0,0,0);
+                document.getElementById('death-msg').style.display = 'block';
+                setTimeout(()=>document.getElementById('death-msg').style.display='none', 2000);
+            }
+            controls.getObject().position.copy(playerPos).add(new THREE.Vector3(0, EYE_HEIGHT, 0));
+        }
+
+        function getKey(x, y, z) { return `${x},${y},${z}`; }
+        function getBlockGrid(x, y, z) { return worldMap.get(getKey(x, y, z)); }
+        function addBlockGrid(gx, gy, gz, matIdx) {
+            const key = getKey(gx, gy, gz);
+            if (worldMap.has(key)) return;
+            const m = new THREE.Mesh(boxGeometry, materials[matIdx]);
+            m.position.set(gx*BLOCK_SIZE + BLOCK_SIZE/2, gy*BLOCK_SIZE + BLOCK_SIZE/2, gz*BLOCK_SIZE + BLOCK_SIZE/2);
+            m.name = (matIdx === 9) ? "TNT" : "BLOCK";
+            scene.add(m); worldMap.set(key, m); objects.push(m);
+        }
+        function removeBlock(obj) {
+            scene.remove(obj); objects.splice(objects.indexOf(obj), 1);
+            for(const [k,v] of worldMap.entries()) if(v===obj) { worldMap.delete(k); break; }
+        }
+
+        function spawnMobs() {
+            const types = ['pig', 'cow', 'chicken', 'villager'];
+            for(let i=0; i<20; i++) {
+                const x = (Math.random() * WORLD_SIZE - WORLD_SIZE/2) * BLOCK_SIZE;
+                const z = (Math.random() * WORLD_SIZE - WORLD_SIZE/2) * BLOCK_SIZE;
+                mobs.push(new Mob(types[Math.floor(Math.random()*types.length)], x, 100, z));
+            }
+        }
+
+        function createTexture(t) {
+            const s=64, c=document.createElement('canvas'); c.width=s; c.height=s;
+            const ctx=c.getContext('2d');
+            if(t==='water') { ctx.fillStyle='rgba(65,105,225,0.6)'; ctx.fillRect(0,0,s,s); } 
+            else if(t==='sand') ctx.fillStyle='#F4A460';
+            else if(t==='leaves') ctx.fillStyle='#228B22';
+            else if(t==='tnt') {
+                ctx.fillStyle='#B71C1C'; ctx.fillRect(0,0,s,s);
+                ctx.fillStyle='white'; ctx.fillRect(0,s/4,s,s/2);
+                ctx.fillStyle='black'; ctx.font='bold 20px Arial'; ctx.textAlign='center'; ctx.fillText("TNT",s/2,s/2+7);
+            } else ctx.fillStyle = (t==='grass')?'#55aa55':(t==='dirt')?'#8B4513':(t==='stone')?'#808080':(t==='wood')?'#5D4037':'#ccc';
+            
+            if(t!=='tnt' && t!=='water') ctx.fillRect(0,0,s,s);
+            if(t!=='water' && t!=='tnt') for(let i=0;i<300;i++){ ctx.fillStyle='rgba(0,0,0,0.1)'; ctx.fillRect(Math.random()*s,Math.random()*s,2,2); }
+            if(t==='brick') { ctx.fillStyle='#B71C1C'; ctx.fillRect(0,0,s,s); ctx.fillStyle='#ccc'; for(let y=0;y<s;y+=16){ ctx.fillRect(0,y,s,2); for(let x=(y%32?16:0);x<s;x+=32) ctx.fillRect(x,y,2,16); } }
+            
+            const tex = new THREE.CanvasTexture(c); tex.magFilter = THREE.NearestFilter;
+            return {tex:tex, canvas:c};
+        }
+
+        function generateMaterials() {
+            const ts = ['grass','dirt','stone','wood','leaves','brick','sand','wood','water','tnt'].map(n=>createTexture(n));
+            materials = ts.map((t,i) => new THREE.MeshLambertMaterial({ map:t.tex, transparent:i===8, opacity:i===8?0.6:1, side:THREE.DoubleSide }));
+            ts.forEach((t,i) => { if(blockTypes[i]) blockTypes[i].ui = t.canvas; });
+        }
+
+        function setupHotbar() {
+            const h = document.getElementById('hotbar'); h.innerHTML='';
+            blockTypes.forEach((b,i) => {
+                const s=document.createElement('div'); s.className='slot'+(i===0?' active':'');
+                if(b.ui) s.style.backgroundImage=`url(${b.ui.toDataURL()})`; else s.innerText=i+1;
+                
+                // ★修正箇所: タッチ/クリックで選択
+                const select = (e) => {
+                    e.preventDefault(); 
+                    e.stopPropagation(); // ゲーム画面への誤爆防止
+                    currentBlockIndex = i;
+                    document.querySelectorAll('.slot').forEach((el,idx)=>el.classList.toggle('active', idx===i));
+                };
+                s.addEventListener('touchstart', select);
+                s.addEventListener('mousedown', select);
+
+                h.appendChild(s);
+            });
+        }
+
+        function onKeyDown(e) {
+            if(e.code==='KeyW') moveForward=true; if(e.code==='KeyA') moveLeft=true;
+            if(e.code==='KeyS') moveBackward=true; if(e.code==='KeyD') moveRight=true;
+            if(e.code==='Space' && onGround) playerVel.y=JUMP_SPEED;
+            let i = parseInt(e.key)-1; if(e.key==='0') i=9;
+            if(i>=0 && i<blockTypes.length) {
+                currentBlockIndex=i;
+                document.querySelectorAll('.slot').forEach((el,idx)=>el.classList.toggle('active', idx===i));
+            }
+        }
+        function onKeyUp(e) {
+            if(e.code==='KeyW') moveForward=false; if(e.code==='KeyA') moveLeft=false;
+            if(e.code==='KeyS') moveBackward=false; if(e.code==='KeyD') moveRight=false;
+        }
+        function onResize() { camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth,window.innerHeight); }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(controls.isLocked || isMobile) {
+                const now=performance.now(), delta=Math.min((now-prevTime)/1000, 0.1);
+                updatePhysics(delta);
+                mobs.forEach(m => m.update(delta));
+                for(let i=particles.length-1; i>=0; i--) {
+                    const p = particles[i];
+                    p.position.addScaledVector(p.userData.vel, delta);
+                    p.userData.vel.y -= GRAVITY*delta;
+                    p.userData.life -= delta;
+                    if(p.userData.life<=0) { scene.remove(p); particles.splice(i,1); }
+                }
+                prevTime=now;
+            } else prevTime=performance.now();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
