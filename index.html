@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Minecraft Clone - Fixed</title>
+    <title>Minecraft Clone - Mobile Fixed</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; user-select: none; touch-action: none; -webkit-touch-callout: none; }
         
@@ -93,7 +93,7 @@
         <h1>タップして開始</h1>
         <p>PC: WASD移動 / Spaceジャンプ / Shiftスニーク</p>
         <p>スマホ: 左手移動 / 右手視点</p>
-        <p style="color:lime">Update: エラー修正完了</p>
+        <p style="color:lime">Update: 視点操作修正済み</p>
     </div>
     <div id="hotbar"></div>
     <div id="death-msg">YOU DIED</div>
@@ -181,7 +181,7 @@
             playPhrase();
         }
 
-        // --- 設定・変数 (エラー修正のため最上部に配置) ---
+        // --- 設定・変数 ---
         const BLOCK_SIZE = 5;
         const WORLD_SIZE = 60;
         const WATER_LEVEL = 0; 
@@ -194,6 +194,7 @@
         const JUMP_SPEED = 16.0 * BLOCK_SIZE;
         const GRAVITY = 60.0 * BLOCK_SIZE;
 
+        // 変数定義（エラー回避のため上部）
         let camera, scene, renderer, controls, raycaster;
         let sunLight, ambientLight;
         const worldMap = new Map();
@@ -212,7 +213,6 @@
         let gameTime = 6000;
         const dayDuration = 300.0;
         
-        // ★修正箇所: ここで宣言してエラー回避
         let isSwinging = false;
         let swingTime = 0;
 
@@ -303,6 +303,10 @@
             isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
             scene = new THREE.Scene(); scene.background = new THREE.Color(0x87CEEB); scene.fog = new THREE.Fog(0x87CEEB, 20, 300);
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            
+            // ★重要：回転順序を「YXZ（横向いてから縦）」に設定し、ジンバルロックとロールを防ぐ
+            camera.rotation.order = 'YXZ'; 
+
             createHandModel();
             controls = new PointerLockControls(camera, document.body);
             scene.add(controls.getObject());
@@ -380,23 +384,38 @@
             snk.addEventListener('touchstart', (e)=>{ e.preventDefault(); isSneaking = !isSneaking; snk.classList.toggle('active', isSneaking); });
             document.getElementById('btn-break').addEventListener('touchstart', (e)=>{e.preventDefault(); performAction(false);});
             document.getElementById('btn-place').addEventListener('touchstart', (e)=>{e.preventDefault(); performAction(true);});
+            
+            // --- 視点移動の修正ロジック ---
             let lt=null, lx=0, ly=0;
+            const lookSensitivity = 0.005;
+
             document.addEventListener('touchstart', (e)=>{
                 if(e.target.closest('.mobile-ctrl')||e.target.closest('#hotbar'))return;
                 for(let i=0;i<e.changedTouches.length;i++){if(lt===null){lt=e.changedTouches[i].identifier; lx=e.changedTouches[i].pageX; ly=e.changedTouches[i].pageY; break;}}
             }, {passive:false});
+
             document.addEventListener('touchmove', (e)=>{
                 if(e.target.closest('#hotbar'))return; e.preventDefault();
                 for(let i=0;i<e.changedTouches.length;i++){
                     const t=e.changedTouches[i];
                     if(t.identifier===lt){
-                        const cam=controls.getObject();
-                        cam.rotation.y-=(t.pageX-lx)*0.006; cam.rotation.x-=(t.pageY-ly)*0.006;
-                        cam.rotation.x=Math.max(-Math.PI/2, Math.min(Math.PI/2, cam.rotation.x));
+                        const cam = controls.getObject(); // Camera
+                        
+                        // YXZオーダーなので、yは横回転(Yaw)、xは縦回転(Pitch)として正しく分離される
+                        const deltaX = (t.pageX - lx) * lookSensitivity;
+                        const deltaY = (t.pageY - ly) * lookSensitivity;
+
+                        cam.rotation.y -= deltaX;
+                        cam.rotation.x -= deltaY;
+
+                        // 縦回転の制限（真上・真下まで）
+                        cam.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cam.rotation.x));
+
                         lx=t.pageX; ly=t.pageY;
                     }
                 }
             }, {passive:false});
+
             document.addEventListener('touchend', (e)=>{for(let i=0;i<e.changedTouches.length;i++){if(e.changedTouches[i].identifier===lt)lt=null;}});
         }
 
@@ -645,7 +664,6 @@
             renderer.render(scene, camera);
         }
 
-        // ★修正: 実行を一番最後に移動
         init();
         animate();
     </script>
