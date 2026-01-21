@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Minecraft Clone - Mobile Full v3</title>
+    <title>Minecraft Clone - Ambient Ver</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; user-select: none; touch-action: none; -webkit-touch-callout: none; }
         
@@ -30,14 +30,14 @@
             transform: translateX(-50%);
             display: flex; gap: 5px;
             background: rgba(0, 0, 0, 0.4); padding: 5px; border-radius: 5px;
-            z-index: 20; /* UIの優先度を高く設定 */
+            z-index: 20;
         }
         .slot {
             width: 30px; height: 30px; border: 2px solid #555;
             display: flex; justify-content: center; align-items: center;
             color: white; font-weight: bold; background-color: #333;
             background-size: cover; image-rendering: pixelated; font-size: 12px;
-            cursor: pointer; pointer-events: auto; /* タップ可能に */
+            cursor: pointer; pointer-events: auto;
         }
         .slot.active { border-color: white; transform: scale(1.1); box-shadow: 0 0 5px white; }
         #death-msg {
@@ -45,11 +45,10 @@
             text-align: center; color: red; font-size: 40px; font-weight: bold; text-shadow: 2px 2px 0 #000; z-index: 30;
         }
 
-        /* --- モバイル用コントローラー --- */
+        /* --- モバイルUI --- */
         .mobile-ctrl {
             position: absolute; z-index: 8; display: none; 
         }
-        /* 左手：移動キー */
         #dpad { bottom: 40px; left: 20px; width: 160px; height: 160px; }
         .d-btn {
             position: absolute; width: 50px; height: 50px;
@@ -63,7 +62,6 @@
         #btn-left { top: 55px; left: 0; }
         #btn-right { top: 55px; right: 0; }
 
-        /* 右手：アクション */
         #actions { bottom: 40px; right: 20px; width: 150px; height: 150px; }
         .act-btn {
             position: absolute; width: 60px; height: 60px; border-radius: 50%;
@@ -78,7 +76,7 @@
 
         @media (max-width: 800px) {
             #hotbar { bottom: 5px; }
-            .slot { width: 35px; height: 35px; } /* スマホ用に少し大きく */
+            .slot { width: 35px; height: 35px; }
         }
     </style>
 </head>
@@ -87,8 +85,8 @@
     <div id="instructions">
         <h1>タップして開始</h1>
         <p>PC: WASD移動 / Spaceジャンプ</p>
-        <p>スマホ: 左手で移動 / 右手でスワイプして視点</p>
-        <p style="color:lime">修正: アイコンタップでブロック選択</p>
+        <p>スマホ: 左手移動 / 右手視点</p>
+        <p style="color:lime">Update: アンビエントBGM搭載</p>
     </div>
     <div id="hotbar"></div>
     <div id="death-msg">YOU DIED</div>
@@ -113,6 +111,97 @@
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
+        // --- 高度な音声合成システム (Web Audio API) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        const Sound = {
+            // ピアノ風の音色生成
+            playPiano: (freq, startTime, duration, vol=0.05) => {
+                if(audioCtx.state === 'suspended') audioCtx.resume();
+                const t = startTime || audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                // 三角波（柔らかい音）を使用
+                osc.type = 'triangle'; 
+                osc.frequency.value = freq;
+                
+                // エンベロープ（音の形）: ポローンと鳴って長く響く
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(vol, t + 0.05); // アタック
+                gain.gain.exponentialRampToValueAtTime(0.001, t + duration); // 長いリリース
+                
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + duration);
+            },
+            playNoise: (duration, vol=0.1) => {
+                if(audioCtx.state === 'suspended') audioCtx.resume();
+                const bufferSize = audioCtx.sampleRate * duration;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+                noise.connect(gain); gain.connect(audioCtx.destination);
+                noise.start();
+            },
+            step: () => Sound.playNoise(0.05, 0.03), 
+            jump: () => { 
+                if(audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+                osc.frequency.linearRampToValueAtTime(500, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+            },
+            place: () => Sound.playPiano(800, 0, 0.05, 0.1), // 設置音も少し音程をつける
+            break: () => Sound.playNoise(0.1, 0.15),
+            explode: () => Sound.playNoise(1.0, 0.5)
+        };
+
+        // --- マインクラフト風アンビエントBGM ---
+        // C Majorのゆったりとしたコード進行
+        const chords = [
+            [261.63, 329.63, 392.00], // C
+            [174.61, 220.00, 261.63], // F (inv)
+            [220.00, 261.63, 329.63], // Am
+            [196.00, 246.94, 293.66], // G
+            [261.63, 311.13, 392.00]  // Cm (たまに切なく)
+        ];
+
+        let bgmTimer;
+        function startBGM() {
+            if(bgmTimer) return;
+            
+            const playPhrase = () => {
+                const now = audioCtx.currentTime;
+                // ランダムにコードを選択
+                const chord = chords[Math.floor(Math.random() * chords.length)];
+                
+                // 和音を少しずらして鳴らす（アルペジオ気味に）
+                chord.forEach((note, i) => {
+                    // 低音、中音、高音で微妙にタイミングと長さを変える
+                    Sound.playPiano(note, now + i * 0.2, 4.0, 0.02); 
+                    // オクターブ上の音を薄く重ねる
+                    if(Math.random() > 0.5) Sound.playPiano(note * 2, now + i * 0.2 + 0.1, 3.0, 0.01);
+                });
+
+                // 次のフレーズまでの間隔を長く取る（8秒〜15秒）これがマイクラっぽさの秘訣
+                const nextTime = 8000 + Math.random() * 7000;
+                bgmTimer = setTimeout(playPhrase, nextTime);
+            };
+
+            playPhrase();
+        }
+
         // --- 設定 ---
         const BLOCK_SIZE = 5;
         const WORLD_SIZE = 60;
@@ -134,6 +223,7 @@
         let onGround = false;
         let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
         let prevTime = performance.now();
+        let stepTimer = 0;
         let isMobile = false;
 
         const blockTypes = [
@@ -190,6 +280,7 @@
                 if (!this.alive) return;
                 this.hp--;
                 this.flashTime = 0.2;
+                Sound.break(); 
                 const dir = new THREE.Vector3().subVectors(this.mesh.position, fromPos).normalize();
                 this.velocity.add(dir.multiplyScalar(15.0));
                 this.velocity.y = 10.0;
@@ -250,15 +341,22 @@
             scene.add(controls.getObject());
 
             const inst = document.getElementById('instructions');
+            
+            const startGame = () => {
+                inst.style.display = 'none';
+                if(isMobile) document.querySelectorAll('.mobile-ctrl').forEach(el => el.style.display = 'block');
+                else controls.lock();
+                
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                startBGM(); 
+            };
+
             if (isMobile) {
                 inst.innerHTML = "<h1>タップして開始</h1>";
-                inst.addEventListener('click', () => {
-                    inst.style.display = 'none';
-                    document.querySelectorAll('.mobile-ctrl').forEach(el => el.style.display = 'block');
-                });
+                inst.addEventListener('click', startGame);
                 setupMobileControls();
             } else {
-                inst.addEventListener('click', () => controls.lock());
+                inst.addEventListener('click', startGame);
                 controls.addEventListener('lock', () => inst.style.display = 'none');
                 controls.addEventListener('unlock', () => inst.style.display = 'block');
             }
@@ -271,7 +369,6 @@
             document.addEventListener('keydown', onKeyDown);
             document.addEventListener('keyup', onKeyUp);
             document.addEventListener('mousedown', (e) => { 
-                // モバイルの場合、UIへのタッチは除外
                 if(isMobile && (e.target.closest('#hotbar') || e.target.closest('.mobile-ctrl'))) return;
                 if(!isMobile) onMouseDown(e); 
             });
@@ -302,46 +399,38 @@
             bindBtn('btn-down', () => moveBackward=true, () => moveBackward=false);
             bindBtn('btn-left', () => moveLeft=true, () => moveLeft=false);
             bindBtn('btn-right', () => moveRight=true, () => moveRight=false);
-            bindBtn('btn-jump', () => { if(onGround) playerVel.y = JUMP_SPEED; }, () => {});
+            bindBtn('btn-jump', () => { 
+                if(onGround) { playerVel.y = JUMP_SPEED; Sound.jump(); }
+            }, () => {});
 
             document.getElementById('btn-break').addEventListener('touchstart', (e) => { e.preventDefault(); performAction(false); });
             document.getElementById('btn-place').addEventListener('touchstart', (e) => { e.preventDefault(); performAction(true); });
 
-            // 視点操作
             let lookTouchId = null;
             let lastLookX = 0, lastLookY = 0;
 
             document.addEventListener('touchstart', (e) => {
                 if (e.target.closest('.mobile-ctrl') || e.target.closest('#hotbar')) return;
-                
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
                     if (lookTouchId === null) {
                         lookTouchId = t.identifier;
-                        lastLookX = t.pageX;
-                        lastLookY = t.pageY;
-                        break;
+                        lastLookX = t.pageX; lastLookY = t.pageY; break;
                     }
                 }
             }, {passive: false});
 
             document.addEventListener('touchmove', (e) => {
                 if (e.target.closest('#hotbar')) return;
-                e.preventDefault(); // スクロール防止
-
+                e.preventDefault();
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
                     if (t.identifier === lookTouchId) {
-                        const dx = t.pageX - lastLookX;
-                        const dy = t.pageY - lastLookY;
-
+                        const dx = t.pageX - lastLookX; const dy = t.pageY - lastLookY;
                         const cam = controls.getObject();
-                        cam.rotation.y -= dx * 0.006;
-                        cam.rotation.x -= dy * 0.006;
+                        cam.rotation.y -= dx * 0.006; cam.rotation.x -= dy * 0.006;
                         cam.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, cam.rotation.x));
-
-                        lastLookX = t.pageX;
-                        lastLookY = t.pageY;
+                        lastLookX = t.pageX; lastLookY = t.pageY;
                     }
                 }
             }, {passive: false});
@@ -375,9 +464,13 @@
                     const bx = gx*BLOCK_SIZE+BLOCK_SIZE/2, by = gy*BLOCK_SIZE+BLOCK_SIZE/2, bz = gz*BLOCK_SIZE+BLOCK_SIZE/2;
                     if(Math.abs(playerPos.x-bx)<PLAYER_WIDTH+2 && Math.abs(playerPos.z-bz)<PLAYER_WIDTH+2 && by>=playerPos.y && by<playerPos.y+PLAYER_HEIGHT) return;
                     addBlockGrid(gx, gy, gz, currentBlockIndex);
+                    Sound.place(); 
                 } else { 
                     if(i.object.name === "TNT") igniteTNT(i.object);
-                    else removeBlock(i.object);
+                    else {
+                        removeBlock(i.object);
+                        Sound.break(); 
+                    }
                 }
             }
         }
@@ -450,11 +543,13 @@
 
         function igniteTNT(blockMesh) {
             let toggle = true;
+            Sound.playNoise(0.1, 0.3); // 点火音
             const blink = setInterval(() => { blockMesh.material = toggle ? new THREE.MeshBasicMaterial({color:0xFFFFFF}) : materials[9]; toggle = !toggle; }, 300);
             setTimeout(() => { clearInterval(blink); explode(blockMesh.position.clone()); }, 3000);
         }
 
         function explode(center) {
+            Sound.explode(); 
             const radius = 4.0 * BLOCK_SIZE;
             createExplosion(center, 50, 0xFFA500); 
             const rGrid = Math.ceil(radius / BLOCK_SIZE);
@@ -481,6 +576,7 @@
             playerVel.z -= playerVel.z * 10.0 * delta;
             playerVel.y -= GRAVITY * delta;
 
+            let moving = false;
             if (moveForward || moveBackward || moveLeft || moveRight) {
                 const fwd = new THREE.Vector3(); 
                 controls.getDirection(fwd); 
@@ -493,7 +589,18 @@
                 if(dir.lengthSq()>0) {
                     playerVel.x += dir.x * MOVE_SPEED * delta;
                     playerVel.z += dir.z * MOVE_SPEED * delta;
+                    moving = true;
                 }
+            }
+            
+            if(moving && onGround) {
+                stepTimer -= delta;
+                if(stepTimer <= 0) {
+                    Sound.step();
+                    stepTimer = 0.4; 
+                }
+            } else {
+                stepTimer = 0;
             }
 
             const nx = playerPos.x + playerVel.x * delta;
@@ -569,17 +676,13 @@
             blockTypes.forEach((b,i) => {
                 const s=document.createElement('div'); s.className='slot'+(i===0?' active':'');
                 if(b.ui) s.style.backgroundImage=`url(${b.ui.toDataURL()})`; else s.innerText=i+1;
-                
-                // ★修正箇所: タッチ/クリックで選択
                 const select = (e) => {
-                    e.preventDefault(); 
-                    e.stopPropagation(); // ゲーム画面への誤爆防止
+                    e.preventDefault(); e.stopPropagation();
                     currentBlockIndex = i;
                     document.querySelectorAll('.slot').forEach((el,idx)=>el.classList.toggle('active', idx===i));
                 };
                 s.addEventListener('touchstart', select);
                 s.addEventListener('mousedown', select);
-
                 h.appendChild(s);
             });
         }
@@ -587,7 +690,7 @@
         function onKeyDown(e) {
             if(e.code==='KeyW') moveForward=true; if(e.code==='KeyA') moveLeft=true;
             if(e.code==='KeyS') moveBackward=true; if(e.code==='KeyD') moveRight=true;
-            if(e.code==='Space' && onGround) playerVel.y=JUMP_SPEED;
+            if(e.code==='Space' && onGround) { playerVel.y=JUMP_SPEED; Sound.jump(); }
             let i = parseInt(e.key)-1; if(e.key==='0') i=9;
             if(i>=0 && i<blockTypes.length) {
                 currentBlockIndex=i;
